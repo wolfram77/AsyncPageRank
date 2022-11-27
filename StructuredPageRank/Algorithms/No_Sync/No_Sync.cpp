@@ -15,12 +15,12 @@
 #include <string>
 #include <algorithm>
 #include <iterator>
-#include <cmath> 
+#include <cmath>
 #include <sys/time.h>
 #include <unistd.h>
 using namespace std;
 
-vector<int> A; 
+vector<int> A;
 vector<int> IA;
 vector<int> JA;
 vector<int> out_edges;
@@ -64,13 +64,13 @@ void *thread_page_rank(void* thdnumber) {
 		for(int i=*thdid+start_node;i<=nodes;i=i+thdnum) {
 			double temp = (1 - damping_factor ) / (nodes + 1);
 			double prev = page_rank[i];
-			
+
 			for(int j=IA[i-1];j<IA[i];j++) {
 				temp = temp + page_rank[JA[j]]/out_edges[JA[j]] * damping_factor;
 			}
 			page_rank[i] = temp;
 			local_error = max(local_error,fabs(page_rank[i]-prev));
-			
+
 		}
 		iterations[*thdid]++;
 		th_error[*thdid] = local_error;
@@ -100,10 +100,10 @@ void compute_page_rank() {
 	pthread_barrier_destroy(&b);
 }
 
-bool comparePair(pair<double,double> i1, pair<double,double> i2) 
-{ 
-    return (i1.first > i2.first); 
-} 
+bool comparePair(pair<double,double> i1, pair<double,double> i2)
+{
+    return (i1.first > i2.first);
+}
 
 
 int main(int argc, char** argv)
@@ -122,7 +122,7 @@ int main(int argc, char** argv)
 		cout << "Check the arguments\n";
 		return 0;
 	}
-	
+
 	fstream file;
 	file.open(filename.c_str());
 	IA.resize(max_nodes,0);
