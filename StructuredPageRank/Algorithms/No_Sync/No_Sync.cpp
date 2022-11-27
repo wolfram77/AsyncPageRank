@@ -1,188 +1,110 @@
-#include <pthread.h>
-#include <stdlib.h>
-#include <stdio.h>
-#include <time.h>
-#include <omp.h>
-
-#include <bitset>
+#include <cmath>
 #include <cstdlib>
-#include <iostream>
-#include <atomic>
-#include <mutex>
+#include <cstdio>
+#include <algorithm>
+#include <iterator>
+#include <string>
 #include <vector>
 #include <sstream>
 #include <fstream>
-#include <string>
-#include <algorithm>
-#include <iterator>
-#include <cmath>
+#include <iostream>
+#include <pthread.h>
+#include <time.h>
 #include <sys/time.h>
 #include <unistd.h>
+
 using namespace std;
 
-vector<int> A;
+
+
+
 vector<int> IA;
 vector<int> JA;
-vector<int> out_edges;
-vector<int> no_out_edges;
+vector<int> degrees;
 vector<int> iterations;
-vector<double> page_rank_prev, page_rank;
-int nodes = 0, max_nodes = 400000;
-double thershold = 0.0000000000000001, damping_factor = 0.85;
-int thdnum = 4;
-pthread_barrier_t b;
-int start_node = 0;
-vector<double> th_sum;
-int iteration_threshold = 10;
-std::atomic<double> error;
+vector<double> pr;
+
+int FIRST_NODE  = 1;
+int LAST_NODE   = 0;
+int MAX_NODES   = 10000000;
+int NUM_THREADS = 12;
+int MAX_ITERATIONS    = 500;
+double TOLERANCE      = 1E-10;
+double DAMPING_FACTOR = 0.85;
 vector<double> th_error;
+pthread_barrier_t barrier;
 
-/**********************************
-*
-* Helper Print Functions
-*
-***********************************/
 
-template <typename T>
-void printVector(const vector<T>& vec, int startNode)
-{
-	for (T i = startNode; i < vec.size(); i++)
-	{
-		cout << "\n" << i << ": " << vec[i] << " ";
-	}
-	cout << "\n";
-}
 
-void *thread_page_rank(void* thdnumber) {
-	int *thdid = (int *)thdnumber;
-	double local_error = 1;
 
-	local_error = error.load(std::memory_order_seq_cst);
-	while(local_error > thershold) {
-	//while(iterations[*thdid] < iteration_threshold) {
-    	local_error = 0;
-		for(int i=*thdid+start_node;i<=nodes;i=i+thdnum) {
-			double temp = (1 - damping_factor ) / (nodes + 1);
-			double prev = page_rank[i];
-
-			for(int j=IA[i-1];j<IA[i];j++) {
-				temp = temp + page_rank[JA[j]]/out_edges[JA[j]] * damping_factor;
-			}
-			page_rank[i] = temp;
-			local_error = max(local_error,fabs(page_rank[i]-prev));
-
-		}
-		iterations[*thdid]++;
-		th_error[*thdid] = local_error;
-		for(int i=0;i<thdnum;i++) {
-			local_error = max(local_error,th_error[i]);
-		}
-	}
-	//cout << "\n Iterations Taken: " << iterations[*thdid] << endl;
-	//printVector(iterations, start_node);
-};
-
-void compute_page_rank() {
-	int iterations = 0;
-
-	pthread_t threads[thdnum];
-	int thdid[thdnum];
-	pthread_barrier_init(&b, 0, thdnum);
-
-	for (int i = 0; i < thdnum; ++i) {
-		thdid[i] = i;
-		pthread_create(&threads[i], NULL, thread_page_rank, (void *)&thdid[i]);
-	}
-
-	for (int i = 0; i < thdnum; ++i) {
-		pthread_join(threads[i], NULL);
-	}
-	pthread_barrier_destroy(&b);
-}
-
-bool comparePair(pair<double,double> i1, pair<double,double> i2)
-{
-    return (i1.first > i2.first);
+void* thread_pagerank(void *data) {
+  int th_id = *((int*) data);
+  double err = 1;
+  while (err > TOLERANCE) {
+    err = 0;
+    for (int i=th_id+FIRST_NODE; i<=LAST_NODE; i+=NUM_THREADS) {
+      double temp = (1-DAMPING_FACTOR) / (LAST_NODE+1);
+      double prev = pr[i];
+      for (int j=IA[i-1]; j<IA[i]; j++)
+        temp += pr[JA[j]] / degrees[JA[j]] * DAMPING_FACTOR;
+      pr[i] = temp;
+      err  = max(err, fabs(pr[i] - prev));
+    }
+    iterations[th_id]++;
+    th_error  [th_id] = err;
+    for (int i=0; i<NUM_THREADS; i++)
+      err = max(err, th_error[i]);
+  }
+  return NULL;
 }
 
 
-int main(int argc, char** argv)
-//int main()
-{
-	//string filename = "Notre.txt", line;
-	string filename = "", line;
-	if(argc == 6) {
-		filename = argv[1];
-		thdnum = atoi(argv[2]);
-		start_node = atoi(argv[3]);
-		max_nodes = atoi(argv[4]);
-		iteration_threshold = atoi(argv[5]);
-	}
-	else {
-		cout << "Check the arguments\n";
-		return 0;
-	}
+void compute_pagerank() {
+  int        th_ids[NUM_THREADS];
+  pthread_t threads[NUM_THREADS];
+  pthread_barrier_init(&barrier, 0, NUM_THREADS);
+  for (int i=0; i<NUM_THREADS; ++i) {
+    th_ids[i] = i;
+    pthread_create(&threads[i], NULL, thread_pagerank, (void*) &th_ids[i]);
+  }
+  for (int i=0; i<NUM_THREADS; ++i)
+    pthread_join(threads[i], NULL);
+  pthread_barrier_destroy(&barrier);
+}
 
-	fstream file;
-	file.open(filename.c_str());
-	IA.resize(max_nodes,0);
-	out_edges.resize(max_nodes,0);
-	iterations.resize(thdnum,0);
-	error.store(1, std::memory_order_seq_cst);
-	th_error.resize(thdnum,0);
 
-	while(getline(file, line)){
-	istringstream iss(line);
-	        vector<int> tokens{istream_iterator<int>{iss}, istream_iterator<int>{}};
-	        A.push_back(1);
-	        JA.push_back(tokens[1]);
-	        IA[tokens[0]]++;
-	        out_edges[tokens[1]]++;
-	        nodes = max(nodes,tokens[0]);
-	        nodes = max(nodes,tokens[1]);
-	}
-	file.close();
-
-	for(int i=1;i<IA.size();i++) {
-		IA[i] = IA[i] + IA[i-1];
-	}
-
-	page_rank.resize(nodes+1,1.0000/(nodes+1));
-
-	struct timeval startwtime, endwtime;
-    gettimeofday (&startwtime, NULL);
-
-	compute_page_rank();
-
-	gettimeofday (&endwtime, NULL);
-
-	double time = (double)((endwtime.tv_usec - startwtime.tv_usec)/1.0e6
-              + endwtime.tv_sec - startwtime.tv_sec);
-
-	// double sum = 0;
-	// for(int i=start_node;i<=nodes;i++) sum = sum + page_rank[i];
-
-	int avg_itr = 0;
-	for (int i = 0; i < thdnum; i++)
-		avg_itr = avg_itr + iterations[i];
-	avg_itr = avg_itr / thdnum;
-
-	string outFileName = __FILE__;
-	size_t lastindex = outFileName.find_last_of(".");
-	size_t firstindex = outFileName.find_last_of("/\\");
-	outFileName = outFileName.substr(firstindex + 1, lastindex);
-	outFileName += "_out.txt";
-	outFileName = "../../Output/" + outFileName;
-
-	cout << outFileName << " Num of threads: " << to_string(thdnum) << " Input File: " << filename << endl;
-	cout << "Time : " << time << "\n";
-	cout << "Iterations : " << avg_itr << "\n";
-
-	std::ofstream outFile(outFileName);
-
-	outFile << time << "\n";
-	outFile << avg_itr << "\n";
-
-	for(int i = start_node; i <= nodes; i++)
-		outFile << page_rank[i] << "\n";
-};
+int main(int argc, char **argv) {
+  string line, filename = argv[1];
+  fstream file;
+  file.open(filename.c_str());
+  IA        .resize(MAX_NODES, 0);
+  degrees   .resize(MAX_NODES, 0);
+  iterations.resize(NUM_THREADS, 0);
+  th_error  .resize(NUM_THREADS, 0);
+  cout << "Loading " << filename << " ...\n";
+  while (getline(file, line)) {
+    istringstream iss(line);
+    int u = 0, v = 0;
+    iss >> v >> u;
+    JA.push_back(u);
+    IA[v]++;
+    degrees[u]++;
+    LAST_NODE = max(LAST_NODE, v);
+    LAST_NODE = max(LAST_NODE, u);
+  }
+  file.close();
+  for (int i=1; i<IA.size(); i++)
+    IA[i] = IA[i] + IA[i-1];
+  pr.resize(LAST_NODE+1, 1.0/(LAST_NODE+1));
+  struct timeval startwtime, endwtime;
+  gettimeofday(&startwtime, NULL);
+  compute_pagerank();
+  gettimeofday(&endwtime,   NULL);
+  double time = double((endwtime.tv_usec - startwtime.tv_usec)*1E-3 + (endwtime.tv_sec - startwtime.tv_sec)*1E+3);
+  int avg_itr = 0;
+  for (int i=0; i<NUM_THREADS; i++)
+    avg_itr = avg_itr + iterations[i];
+  avg_itr = avg_itr / NUM_THREADS;
+  cout << "Time: " << time << " ms ";
+  cout << "Iterations: " << avg_itr << "\n\n";
+}
